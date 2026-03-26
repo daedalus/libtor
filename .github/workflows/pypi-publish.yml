@@ -19,14 +19,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Create virtual environment
-        run: uv venv
+      - name: Create virtual environment and install build
+        run: uv venv && uv pip install build
 
       - name: Build package
-        run: uv pip install build && python -m build
+        run: uv run python -m build
 
       - name: Check package
-        run: uv pip install twine && python -m twine check dist/*
+        run: uv run python -m twine check dist/*
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
@@ -54,11 +54,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Create virtual environment
-        run: uv venv
-
-      - name: Install package
-        run: uv pip install -e .
+      - name: Create virtual environment and install package
+        run: uv venv && uv pip install -e .
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
