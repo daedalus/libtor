@@ -10,10 +10,13 @@ Hard-coded directory authority fallbacks are used to bootstrap.
 
 import asyncio
 import base64
+import json
 import logging
+import os
 import random
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from .exceptions import DirectoryError
 
@@ -95,6 +98,174 @@ class RouterInfo:
             f"<RouterInfo {self.nickname} {self.address}:{self.or_port} "
             f"flags={','.join(self.flags)}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Guard state persistence
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GuardState:
+    """Persistent guard selection state per tor-spec §2.3.
+
+    Stored and loaded to maintain consistent guard selection across runs.
+    """
+
+    filename: str = "guard_state.json"
+
+    guards: list[str] = field(default_factory=list)  # List of identity_hex
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    # Parameters controlling guard selection
+    USE_SECONDS: int = 2592000  # 30 days
+    TOTAL_TIMEOUT: int = 900  # 15 minutes
+    FAIL_TIMEOUT: int = 900  # 15 minutes
+    MAX_ADVERTISED_BANDWIDTH: int = 2000000
+
+    # Sample period for testing reachability
+    TESTING_ENABLE: int = 0
+    SAMPLE_PERIOD: int = 86400
+    SAMPLE_SIZE: int = 3
+
+    def add_guard(self, identity_hex: str) -> None:
+        """Add a guard to the persistent list."""
+        if identity_hex not in self.guards:
+            self.guards.insert(0, identity_hex)
+            # Keep max 60 guards (per spec)
+            if len(self.guards) > 60:
+                self.guards = self.guards[:60]
+            self.timestamp = datetime.now(UTC)
+
+    def remove_guard(self, identity_hex: str) -> None:
+        """Remove a guard (e.g., due to failures)."""
+        if identity_hex in self.guards:
+            self.guards.remove(identity_hex)
+            self.timestamp = datetime.now(UTC)
+
+    def save(self, path: str | None = None) -> None:
+        """Save guard state to disk."""
+        filepath = path or self.filename
+        data = {
+            "guards": self.guards,
+            "timestamp": self.timestamp.isoformat(),
+            "USE_SECONDS": self.USE_SECONDS,
+            "TOTAL_TIMEOUT": self.TOTAL_TIMEOUT,
+            "FAIL_TIMEOUT": self.FAIL_TIMEOUT,
+        }
+        try:
+            with open(filepath, "w") as f:
+                json.dump(data, f, indent=2)
+            log.debug("Guard state saved to %s", filepath)
+        except Exception as exc:
+            log.warning("Failed to save guard state: %s", exc)
+
+    @classmethod
+    def load(cls, path: str | None = None) -> "GuardState":
+        """Load guard state from disk, or return empty state."""
+        filepath = path or cls().filename
+        if not os.path.exists(filepath):
+            return cls()
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+            state = cls()
+            state.guards = data.get("guards", [])
+            ts = data.get("timestamp")
+            if ts:
+                state.timestamp = datetime.fromisoformat(ts)
+            log.debug(
+                "Guard state loaded from %s: %d guards", filepath, len(state.guards)
+            )
+            return state
+        except Exception as exc:
+            log.warning("Failed to load guard state: %s", exc)
+            return cls()
+
+
+class GuardSelection:
+    """
+    Guard selection algorithm per tor-spec §2.3.
+
+    Maintains a persistent list of guards and selects from them weighted by
+    bandwidth, preferring to keep the same guards across sessions.
+    """
+
+    def __init__(
+        self,
+        state: GuardState | None = None,
+        state_file: str | None = None,
+    ):
+        self._state = state or GuardState()
+        self._state_file = state_file or self._state.filename
+
+    @property
+    def state(self) -> GuardState:
+        return self._state
+
+    def save(self) -> None:
+        """Persist guard state to disk."""
+        self._state.save(self._state_file)
+
+    def select(
+        self,
+        routers: list[RouterInfo],
+    ) -> RouterInfo | None:
+        """
+        Select a guard relay.
+
+        Args:
+            routers: Available routers from consensus
+
+        Returns:
+            Selected RouterInfo or None if no guards available
+        """
+        # Filter to valid guards
+        guards = [
+            r
+            for r in routers
+            if r.is_guard and r.is_fast and r.is_valid and r.bandwidth > 0
+        ]
+
+        if not guards:
+            return None
+
+        # If we have persistent guards, prioritize them
+        persistent_hex = set(self._state.guards)
+        persistent_guards = [r for r in guards if r.identity_hex in persistent_hex]
+
+        # If we have persistent guards still marked as Guard, use them
+        if persistent_guards:
+            return self._weighted_choice(persistent_guards)
+
+        # Otherwise select from all valid guards and update state
+        selected = self._weighted_choice(guards)
+        if selected:
+            self._state.add_guard(selected.identity_hex)
+            self.save()
+
+        return selected
+
+    def record_failure(self, identity_hex: str) -> None:
+        """Record a guard failure and possibly remove the guard."""
+        self._state.remove_guard(identity_hex)
+        self.save()
+        log.info("Guard %s removed due to failure", identity_hex[:16])
+
+    def _weighted_choice(self, relays: list[RouterInfo]) -> RouterInfo | None:
+        """Select a relay weighted by bandwidth."""
+        if not relays:
+            return None
+        total = sum(r.bandwidth for r in relays)
+        if total == 0:
+            return random.choice(relays)
+        pick = random.randint(0, total - 1)
+        acc = 0
+        for r in relays:
+            acc += r.bandwidth
+            if acc > pick:
+                return r
+        return relays[-1]
 
 
 # ---------------------------------------------------------------------------

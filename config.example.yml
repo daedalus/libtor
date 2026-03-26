@@ -1,0 +1,46 @@
+# libtor configuration
+# Copy to config.yml in your project directory
+
+# Tor client configuration
+tor:
+  # Number of hops in the circuit (2-3 recommended)
+  hops: 3
+  
+  # Timeout for circuit/stream operations (seconds)
+  timeout: 30.0
+  
+  # Timeout for directory operations (seconds)  
+  directory_timeout: 30.0
+  
+  # Guard state file (for persistent guard selection)
+  guard_state_file: guard_state.json
+
+# SOCKS proxy configuration
+socks:
+  # Enable SOCKS proxy server
+  enabled: false
+  
+  # Listen host
+  host: 127.0.0.1
+  
+  # Listen port
+  port: 1080
+
+# Directory client configuration
+directory:
+  # Minimum bandwidth for guards (KB/s)
+  min_bandwidth_guard: 100
+  
+  # Minimum bandwidth for exits (KB/s)
+  min_bandwidth_exit: 50
+  
+  # Require stable flag for exits
+  require_stable_exits: false
+
+# Logging configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+  
+  # Optional: log to file
+  # file: /var/log/libtor.log

@@ -9,6 +9,13 @@ Usage:
             async with circuit.open_stream("example.com", 80) as stream:
                 await stream.send(b"GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
                 data = await stream.recv(4096)
+
+For SOCKS proxy server:
+    from libtor import TorClient, SOCKSProxy
+
+    async with TorClient() as tor:
+        async with SOCKSProxy(tor_client=tor) as proxy:
+            # Proxy running on 127.0.0.1:1080
 """
 
 from typing import TYPE_CHECKING
@@ -16,8 +23,9 @@ from typing import TYPE_CHECKING
 from .cells import Cell, CellCommand, DestroyReason, EndReason, RelayCell, RelayCommand
 from .circuit import Circuit
 from .client import TorClient
+from .config import Config, setup_logging
 from .crypto import CircuitKeys
-from .directory import RouterInfo
+from .directory import GuardSelection, GuardState, RouterInfo
 from .exceptions import (
     CellError,
     CircuitError,
@@ -28,6 +36,7 @@ from .exceptions import (
     StreamError,
     TorError,
 )
+from .socks import SOCKSProxy
 from .stream import TorStream
 
 __version__ = "0.1.0"
@@ -36,6 +45,11 @@ __all__ = [
     "Circuit",
     "TorStream",
     "RouterInfo",
+    "GuardState",
+    "GuardSelection",
+    "SOCKSProxy",
+    "Config",
+    "setup_logging",
     "Cell",
     "CellCommand",
     "RelayCell",
@@ -57,6 +71,8 @@ if TYPE_CHECKING:
     from .cells import Cell, RelayCell
     from .circuit import Circuit
     from .client import TorClient
+    from .config import Config
     from .crypto import CircuitKeys
-    from .directory import RouterInfo
+    from .directory import GuardSelection, GuardState, RouterInfo
+    from .socks import SOCKSProxy
     from .stream import TorStream

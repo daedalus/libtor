@@ -3,6 +3,7 @@ TorClient – high-level async API for the torpy library.
 
 Handles:
   - Bootstrapping (consensus fetch + relay selection)
+  - Guard state persistence across sessions
   - ntor key fetching for each relay
   - Building circuits (guard → middle → exit)
   - Convenience wrappers for HTTP and raw TCP
@@ -15,7 +16,7 @@ from contextlib import asynccontextmanager
 
 from .circuit import Circuit
 from .connection import ORConnection
-from .directory import DirectoryClient, RouterInfo
+from .directory import DirectoryClient, GuardSelection, RouterInfo
 from .exceptions import CircuitError, TorError
 
 log = logging.getLogger(__name__)
@@ -49,11 +50,21 @@ class TorClient:
         hops: int = DEFAULT_CIRCUIT_HOPS,
         timeout: float = DEFAULT_TIMEOUT,
         directory_timeout: float = 30.0,
+        guard_state_file: str | None = "guard_state.json",
     ):
         self._hops = hops
         self._timeout = timeout
         self._dir = DirectoryClient(timeout=directory_timeout)
         self._bootstrapped = False
+
+        # Guard state for persistent guard selection
+        self._guard_selection: GuardSelection | None = None
+        self._guard_state_file = guard_state_file
+
+    @property
+    def guard_selection(self) -> GuardSelection | None:
+        """Return the guard selection, None before bootstrap."""
+        return self._guard_selection
 
     # -----------------------------------------------------------------------
     # Lifecycle
@@ -63,19 +74,25 @@ class TorClient:
         """
         Fetch the consensus and prepare relay lists.
         Must be called before creating circuits.
+
+        Initializes guard selection state from disk if available.
         """
         log.info("Bootstrapping: fetching consensus …")
         await self._dir.fetch_consensus()
-        self._bootstrapped = True
+
+        # Initialize guard selection with persisted state
+        self._guard_selection = GuardSelection(state_file=self._guard_state_file)
         guards = self._dir.get_guards()
         middles = self._dir.get_middle_relays()
         exits = self._dir.get_exits()
+
         log.info(
             "Bootstrap complete: %d guards, %d middles, %d exits available",
             len(guards),
             len(middles),
             len(exits),
         )
+        self._bootstrapped = True
 
     async def close(self) -> None:
         """No persistent connections – nothing to close at client level."""
@@ -229,7 +246,15 @@ class TorClient:
                 f"(guards={len(guards)}, exits={len(exits)})"
             )
 
-        chosen_guard = guard or self._dir.weighted_choice(guards)
+        # Use guard selection for persistent guards if no specific guard provided
+        if guard is None and self._guard_selection is not None:
+            chosen_guard = self._guard_selection.select(guards)
+            if chosen_guard is None:
+                log.warning("No persistent guards available, selecting from all guards")
+                chosen_guard = self._dir.weighted_choice(guards)
+        else:
+            chosen_guard = guard or self._dir.weighted_choice(guards)
+
         chosen_exit = exit_ or self._dir.weighted_choice(
             [r for r in exits if r.identity != chosen_guard.identity]
         )

@@ -60,6 +60,8 @@ class CellCommand(IntEnum):
 
 
 class RelayCommand(IntEnum):
+    """Relay commands as per tor-spec.txt §6.1"""
+
     BEGIN = 1
     DATA = 2
     END = 3
@@ -75,6 +77,15 @@ class RelayCommand(IntEnum):
     BEGIN_DIR = 13
     EXTEND2 = 14
     EXTENDED2 = 15
+    # v2 rendezvous (not implemented)
+    # ESTABLISH_INTRO = 16
+    # ESTABLISH_RENDEZVOUS = 17
+    # INTRO_ESTABLISHED = 18
+    # RENDEZVOUS_ESTABLISHED = 19
+    # JOIN = 20
+    # CONFLUX_LINK = 21
+    # CONFLUX_ESTABLISHED = 22
+    # CONFLUX_LINK_DONE = 23
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +115,8 @@ class DestroyReason(IntEnum):
 
 
 class EndReason(IntEnum):
+    """End reason codes as per tor-spec.txt §6.3"""
+
     MISC = 1
     RESOLVEFAILED = 2
     CONNECTREFUSED = 3
@@ -118,6 +131,12 @@ class EndReason(IntEnum):
     CONNRESET = 12
     TORPROTOCOL = 13
     NOTDIRECTORY = 14
+    # Extended reasons
+    ALREADY_SOCKS_REJECTED = 15
+    CANT_EXTEND = 16
+    NET_UNREACHABLE = 17
+    SOCKS_PROTOCOL = 18
+    CACHE_CONTROL = 13  # Duplicate for compatibility
 
 
 # ---------------------------------------------------------------------------

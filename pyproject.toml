@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
     "cryptography>=42.0.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -60,7 +61,7 @@ ignore = ["E501", "TC004", "F821", "F811", "ANN002", "F841", "ANN201", "ANN202",
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "src/libtor/*.py" = ["ANN201", "ANN202", "ANN204", "F841"]
-"tests/*.py" = ["ANN201", "ANN202", "F811", "E402"]
+"tests/*.py" = ["ANN001", "ANN201", "ANN202", "F811", "E402"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -71,12 +72,15 @@ strict = false
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
-disable_error_code = ["no-any-return", "union-attr", "name-defined", "assignment", "var-annotated", "no-untyped-def"]
+disable_error_code = ["no-any-return", "union-attr", "name-defined", "assignment", "var-annotated", "no-untyped-def", "import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short --cov=src"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "network: tests requiring network connectivity",
+]
 
 [tool.coverage.run]
 source = ["src"]
