@@ -9,13 +9,15 @@ A pure-Python implementation of the Tor protocol — not a wrapper around the To
 ## Features
 
 - **Actual Tor protocol** — TLS to ORs, link-protocol negotiation (v3–v5), VERSIONS/NETINFO handshake
-- **ntor handshake** (Curve25519 + HKDF-SHA256) for EXTEND2
+- **ntor-v3 handshake** (Curve25519 + SHA3-256) for modern circuit creation
+- **ntor handshake** (Curve25519 + HKDF-SHA256) for legacy compatibility
 - **CREATE_FAST** for the first hop (safe because TLS provides forward secrecy)
 - **AES-128-CTR onion encryption** with SHA-1 running digests
 - **Circuit building** — guard → middle → exit path selection, weighted by bandwidth
 - **Stream multiplexing** — RELAY_BEGIN / RELAY_DATA / RELAY_END
 - **Flow control** — per-stream SENDME windows
-- **Directory client** — fetches the v3 consensus from directory authorities, parses microdescriptors for ntor keys
+- **Directory client** — fetches the v3 consensus from directory authorities
+- **ntor key cache** — SQLite-based persistent cache with TTL and stale key cooldown
 - **SOCKS4/5 proxy server** — run a local SOCKS proxy to route any application through Tor
 - **Guard state persistence** — maintain consistent guards across sessions
 - **Configuration file support** — YAML config file and environment variables
@@ -262,7 +264,6 @@ tor:
   hops: 3
   timeout: 30.0
   directory_timeout: 30.0
-  guard_state_file: guard_state.json
 
 socks:
   enabled: true
@@ -295,7 +296,6 @@ tor = TorClient(
     hops=config.tor.hops,
     timeout=config.tor.timeout,
     directory_timeout=config.tor.directory_timeout,
-    guard_state_file=config.tor.guard_state_file,
 )
 
 # Start SOCKS proxy if enabled
@@ -471,9 +471,8 @@ libtor persists guard selection across sessions per the Tor specification:
 ```python
 from libtor import TorClient, GuardState, GuardSelection
 
-# By default, guard state is saved to guard_state.json
-# Disable persistence by passing guard_state_file=None
-client = TorClient(guard_state_file=None)
+# Guard state is stored in libtor.db automatically
+client = TorClient()
 
 # Access guard state directly
 async with TorClient() as tor:
@@ -488,17 +487,49 @@ async with TorClient() as tor:
         # gs.record_failure("ABCD1234...")
 ```
 
-The guard state file format:
+Guard state is stored in the `guard_state` table in `libtor.db`:
 
-```json
-{
-  "guards": ["AAAA...", "BBBB..."],
-  "timestamp": "2024-01-01T00:00:00+00:00",
-  "USE_SECONDS": 2592000,
-  "TOTAL_TIMEOUT": 900,
-  "FAIL_TIMEOUT": 900
-}
+```sql
+SELECT * FROM guard_state WHERE id = 1;
 ```
+
+The table columns:
+- `guards` (TEXT): JSON array of guard identity hex strings
+- `timestamp` (TEXT): ISO timestamp
+- `use_seconds` (INTEGER): 30 days
+- `total_timeout` (INTEGER): 15 minutes  
+- `fail_timeout` (INTEGER): 15 minutes
+
+### ntor Key Cache
+
+libtor caches ntor keys in SQLite with TTL-based eviction:
+
+```python
+from libtor.directory import DescriptorCache
+
+# Cache is automatically used by TorClient
+# Access it directly if needed
+cache = DescriptorCache()
+
+# Check cache status
+print(f"Cached keys: {cache.get_key_count()}")
+print(f"Stale keys: {cache.get_stale_count()}")
+
+# Get a key
+key = cache.get_ntor_key(identity_bytes)
+if key:
+    print("Key found in cache")
+
+# Manually set a key
+cache.set_ntor_key(identity_bytes, ntor_key)
+
+# Mark a key as stale (e.g., after handshake failure)
+cache.mark_stale(identity_bytes)
+```
+
+The cache file `ntor_key_cache.db` stores:
+- `ntor_keys` table: identity → ntor_key with timestamp
+- `stale_keys` table: identity → cooldown_until (1 hour after failure)
 
 ### Bandwidth Filtering
 
@@ -517,6 +548,8 @@ exits = dir_client.get_exits(min_bandwidth=1000, require_stable=True)
 ```
 TorClient
  ├── DirectoryClient        ← fetches consensus, parses relay descriptors
+ ├── DescriptorCache        ← SQLite-backed ntor key cache with TTL
+ ├── GuardSelection         ← persistent guard state per tor-spec §2.3
  ├── ORConnection           ← TLS socket, cell I/O, link protocol
  │    └── asyncio dispatch  ← routes cells by circuit ID
  └── Circuit
@@ -538,6 +571,7 @@ TorClient
 - No HTTPS (port 443) transparent proxying — use a CONNECT tunnel or fetch HTTP
 - Digest verification for relay cells uses the `recognized==0` heuristic; a production client would maintain rolling SHA-1 state per hop direction
 - Client-side only (no relay functionality)
+- **ntor key distribution**: Directory-sourced ntor keys may be stale due to relay key rotation. libtor implements caching with stale key detection, but for production use, integrating with a local Tor daemon's key cache is recommended.
 
 ## Development
 

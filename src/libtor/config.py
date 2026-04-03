@@ -25,7 +25,7 @@ class TorConfig:
     hops: int = 3
     timeout: float = 30.0
     directory_timeout: float = 30.0
-    guard_state_file: str = "guard_state.json"
+    guard_state_file: str | None = None
 
 
 @dataclass

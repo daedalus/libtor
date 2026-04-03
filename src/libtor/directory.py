@@ -903,8 +903,11 @@ class DirectoryClient:
 
     # ---- helpers ----------------------------------------------------------
 
-    async def _http_get(self, host: str, port: int, path: str) -> str:
-        """Minimal async HTTP/1.0 GET (no TLS – directory servers accept plain)."""
+    async def _http_get(self, host: str, port: int, path: str) -> tuple[str, int]:
+        """Minimal async HTTP/1.0 GET (no TLS – directory servers accept plain).
+
+        Returns (body, max_age) tuple where max_age is TTL in seconds from HTTP headers.
+        """
         request = (
             f"GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: libtor/0.1\r\n\r\n"
         ).encode()
@@ -934,12 +937,32 @@ class DirectoryClient:
             except Exception:
                 pass
 
-        text = response.decode("utf-8", errors="replace")
-        # Strip HTTP headers
-        if "\r\n\r\n" in text:
-            _, _, body = text.partition("\r\n\r\n")
-            return body
-        return text
+        # Parse HTTP headers to extract max_age
+        max_age = self.CONSENSUS_TTL  # Default TTL
+        try:
+            raw = response.decode("utf-8", errors="replace")
+            header_end = raw.find("\r\n\r\n")
+            if header_end > 0:
+                headers = raw[:header_end]
+                # Parse Cache-Control header
+                for line in headers.split("\r\n"):
+                    if line.lower().startswith("cache-control:"):
+                        for part in line.split(":", 1)[1].split(","):
+                            if "max-age" in part.lower():
+                                try:
+                                    max_age = int(part.split("=")[1].strip())
+                                except (ValueError, IndexError):
+                                    pass
+                    # Parse Expires header as fallback
+                    elif line.lower().startswith("expires:"):
+                        pass  # Could parse but max-age is preferred
+                body = raw[header_end + 4 :]
+            else:
+                body = raw
+        except Exception:
+            body = response.decode("utf-8", errors="replace")
+
+        return body, max_age
 
     # ---- router selection -------------------------------------------------
 

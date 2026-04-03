@@ -11,9 +11,7 @@ tor:
   
   # Timeout for directory operations (seconds)  
   directory_timeout: 30.0
-  
-  # Guard state file (for persistent guard selection)
-  guard_state_file: guard_state.json
+  # Guard state is now stored in libtor.db (no config needed)
 
 # SOCKS proxy configuration
 socks:

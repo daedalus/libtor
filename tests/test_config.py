@@ -21,7 +21,7 @@ class TestTorConfig:
         assert config.hops == 3
         assert config.timeout == 30.0
         assert config.directory_timeout == 30.0
-        assert config.guard_state_file == "guard_state.json"
+        assert config.guard_state_file is None  # Stored in libtor.db
 
     def test_custom(self):
         config = TorConfig(hops=2, timeout=60.0)
