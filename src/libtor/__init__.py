@@ -25,6 +25,12 @@ from .circuit import Circuit
 from .client import TorClient
 from .config import Config, setup_logging
 from .crypto import CircuitKeys
+from .crypto import (
+    ONION_HANDSHAKE_TYPE_TAP,
+    ONION_HANDSHAKE_TYPE_FAST,
+    ONION_HANDSHAKE_TYPE_NTOR,
+    ONION_HANDSHAKE_TYPE_NTOR_V3,
+)
 from .directory import GuardSelection, GuardState, RouterInfo
 from .exceptions import (
     CellError,
@@ -65,6 +71,11 @@ __all__ = [
     "CellError",
     "RelayError",
     "DestroyedError",
+    # Handshake type constants (matching tor/src/core/or/or.h)
+    "ONION_HANDSHAKE_TYPE_TAP",
+    "ONION_HANDSHAKE_TYPE_FAST",
+    "ONION_HANDSHAKE_TYPE_NTOR",
+    "ONION_HANDSHAKE_TYPE_NTOR_V3",
 ]
 
 if TYPE_CHECKING:

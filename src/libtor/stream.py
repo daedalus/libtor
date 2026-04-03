@@ -79,6 +79,14 @@ class TorStream:
 
         return total
 
+    async def write(self, data: bytes) -> int:
+        """Alias for send() to match file-like interface."""
+        return await self.send(data)
+
+    async def read(self, n: int = 65536, timeout: float | None = None) -> bytes:
+        """Alias for recv() to match file-like interface."""
+        return await self.recv(n, timeout)
+
     async def sendall(self, data: bytes) -> None:
         """Send all data, handling chunking internally."""
         await self.send(data)

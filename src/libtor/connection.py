@@ -45,7 +45,9 @@ class ORConnection:
         self._dispatch_task: asyncio.Task | None = None
         self._closed = False
 
-        self._next_circ_id = 0x80000000  # High bit set for client-initiated
+        self._next_circ_id = (
+            0x80000001  # Start at 0x80000001 so first circuit gets 0x80000001
+        )
 
     # -----------------------------------------------------------------------
     # Connection lifecycle
@@ -112,16 +114,14 @@ class ORConnection:
             Cell(0, CellCommand.VERSIONS, versions_payload), link_version=3
         )
 
-        # Read cells until we've processed VERSIONS + CERTS + NETINFO
-        # (or AUTH_CHALLENGE for v3 inbound – we are a client so we skip AUTH)
+        # Read cells until we've received VERSIONS
         got_versions = False
-        got_netinfo = False
         deadline = asyncio.get_event_loop().time() + self.timeout
 
-        while not (got_versions and got_netinfo):
+        while not got_versions:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
-                raise TorError("Link handshake timed out")
+                raise TorError("Link handshake timed out waiting for VERSIONS")
             cell = await asyncio.wait_for(
                 self._read_cell_raw(link_version=3),
                 timeout=remaining,
@@ -133,19 +133,19 @@ class ORConnection:
                 got_versions = True
                 self._link_version = self._negotiate_version(cell.payload)
                 log.debug("Negotiated link protocol v%d", self._link_version)
-
+                # Send NETINFO after receiving VERSIONS
+                await self._send_netinfo()
+            elif cell.command == CellCommand.NETINFO:
+                # Relay sent NETINFO first, just acknowledge with our NETINFO
+                await self._send_netinfo()
             elif cell.command == CellCommand.CERTS:
                 pass  # Accept without verification (transport-level TLS is enough)
-
             elif cell.command == CellCommand.AUTH_CHALLENGE:
                 pass  # Clients don't need to respond
-
-            elif cell.command == CellCommand.NETINFO:
-                got_netinfo = True
-                await self._send_netinfo()
-
             elif cell.command in (CellCommand.VPADDING, CellCommand.PADDING):
                 pass  # Ignore padding
+            else:
+                log.debug("Unexpected cell during handshake: %s", cell)
 
     def _negotiate_version(self, payload: bytes) -> int:
         """Choose highest mutually supported link protocol version."""
@@ -177,6 +177,12 @@ class ORConnection:
     async def send_cell(self, cell: Cell) -> None:
         """Encode and write a cell."""
         data = cell.to_bytes(link_version=self._link_version)
+        log.debug(
+            "send_cell: sending %s (payload %d bytes: %s)",
+            cell,
+            len(data),
+            data.hex()[:40] + "..." if len(data) > 40 else data.hex(),
+        )
         self._writer.write(data)
         await self._writer.drain()
 
@@ -217,25 +223,48 @@ class ORConnection:
 
     async def _dispatch_loop(self) -> None:
         """Read cells forever and dispatch by circuit ID."""
+        log.debug("_dispatch_loop: starting")
+        total_cells = 0
         try:
             while not self._closed:
+                log.debug("_dispatch_loop: reading cell")
                 cell = await self._read_cell_raw(self._link_version)
                 if cell is None:
+                    log.debug("_dispatch_loop: got None, exiting")
                     break
 
+                total_cells += 1
+                log.debug(
+                    "_dispatch_loop: got cell circ_id=%d cmd=%s (total: %d)",
+                    cell.circ_id,
+                    cell.command,
+                    total_cells,
+                )
                 if cell.command in (CellCommand.PADDING, CellCommand.VPADDING):
                     continue  # Global padding – ignore
 
                 q = self._circuit_queues.get(cell.circ_id)
                 if q is not None:
+                    log.debug(
+                        "_dispatch_loop: putting cell to queue for circ_id=%d (queue size before: %d)",
+                        cell.circ_id,
+                        q.qsize(),
+                    )
                     await q.put(cell)
+                    log.debug(
+                        "_dispatch_loop: put complete, queue size now: %d", q.qsize()
+                    )
                 else:
                     log.debug("Unhandled cell for circ_id=%d: %r", cell.circ_id, cell)
         except asyncio.CancelledError:
+            log.debug("_dispatch_loop: cancelled")
             pass
         except Exception as exc:
             log.debug("Dispatch loop error: %s", exc)
         finally:
+            log.debug(
+                "_dispatch_loop: cleaning up, total cells processed: %d", total_cells
+            )
             # Signal all waiting circuits
             for q in self._circuit_queues.values():
                 await q.put(None)
